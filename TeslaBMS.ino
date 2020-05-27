@@ -37,25 +37,25 @@ SerialConsole console;
 EEPROMSettings settings;
 
 /////Version Identifier/////////
-int firmver = 5;
+int firmver = 6;
 
 //Current filter//
 float filterFrequency = 5.0 ;
 FilterOnePole lowpassFilter( LOWPASS, filterFrequency );
 
 //Simple BMS V2 wiring//
-const int IN1 = 17; // input 1 - high active (Key ON)
-const int IN2 = 16; // input 2- high active (NC)
-const int IN3 = 18; // input 3 - high active !!Modifed!! (AC present)
-const int IN4 = 19; // input 4- high active (NC)
-const int OUT1 = 11;// output 1 - high active (AUX relay)
-const int OUT2 = 12;// output 2 - high active (AUX Precharge)
-const int OUT3 = 20;// output 3 - high active (Charger enable)
-const int OUT4 = 21;// output 4 - high active (Negative contactor)
-const int OUT5 = 22;// output 5 - Low active
-const int OUT6 = 23;// output 6 - Low active
-const int OUT7 = 5;// output 7 - Low active (Power current sensor)
-const int OUT8 = 6;// output 8 - Low active
+const int IN1 = 17; // input 1 - high active Key ON
+const int IN2 = 16; // input 2- high active NC
+const int IN3 = 18; // input 3 - AC present charge door open (Modifed to low in!)
+const int IN4 = 19; // input 4- high active NC
+const int OUT1 = 11;// output 1 - high active IAA enable (HV AUX relay)
+const int OUT2 = 12;// output 2 - high active HV AUX precharge relay
+const int OUT3 = 20;// output 3 - high active Enable charge
+const int OUT4 = 21;// output 4 - high active NC
+const int OUT5 = 22;// output 5 - Low active NC
+const int OUT6 = 23;// output 6 - Low active NC
+const int OUT7 = 5;// output 7 - Low active Negative contactor
+const int OUT8 = 6;// output 8 - Low active NC (SOC gauge)
 const int led = 13;
 const int BMBfault = 11;
 
@@ -73,7 +73,6 @@ byte bmsstatus = 0;
 int Discharge;
 
 unsigned long Pretimer, Pretimer1 = 0;
-//uint16_t SOH = 100; // SOH place holder
 unsigned char alarm[4] = {0, 0, 0, 0};
 unsigned char warning[4] = {0, 0, 0, 0};
 unsigned char len = 0;
@@ -92,7 +91,6 @@ int SOC = 100; //State of Charge
 int SOCset = 0;
 
 //variables
-
 int incomingByte = 0;
 int cellspresent = 0;
 
@@ -137,7 +135,7 @@ void loadSettings()
   settings.socvolt[3] = 90; //Voltage and SOC curve for voltage based SOC calc
   settings.invertcur = 0; //Invert current sensor direction
   settings.voltsoc = 0; //SOC purely voltage based
-  settings.Pretime = 5000; //ms of precharge time
+  settings.Pretime = 2000; //ms of precharge time
   settings.Precurrent = 1000; //ma before closing main contator (TESTED)
   settings.changecur = 20000;//mA change overpoint
   settings.chargertype = 0; // 0 - Relay Control, 1 - Tesla CAN control
@@ -155,17 +153,17 @@ void setup()
   delay(2000);  //It takes a few seconds for BMB comm. (1 sec dosn't work)
   //  pinMode(IN1, INPUT); // In car
   //  pinMode(IN1, INPUT_PULLDOWN); //DEBUG board
-  pinMode(IN1, INPUT_PULLDOWN); // Key ON
-  pinMode(IN2, INPUT_PULLDOWN); // NC
-  pinMode(IN3, INPUT_PULLDOWN); // AC present (charge door open)
-  pinMode(IN4, INPUT_PULLDOWN); // NC
-  pinMode(OUT1, OUTPUT); // AUX relay
-  pinMode(OUT2, OUTPUT); // AUX precharge
-  pinMode(OUT3, OUTPUT); // Charger enable
-  pinMode(OUT4, OUTPUT); // Negative contactor
-  pinMode(OUT5, OUTPUT); // NC Negative contactor
-  pinMode(OUT6, OUTPUT); // NC Pos contactor
-  pinMode(OUT7, OUTPUT); // Power current sensor
+  pinMode(IN1, INPUT);   // Key ON/OFF
+  pinMode(IN2, INPUT);   // NC
+  pinMode(IN3, INPUT);   // AC present (charge door open)
+  pinMode(IN4, INPUT);   // NC
+  pinMode(OUT1, OUTPUT); // IAA module (HV AUX relay)
+  pinMode(OUT2, OUTPUT); // HV AUX precharge relay
+  pinMode(OUT3, OUTPUT); // Enable charge
+  pinMode(OUT4, OUTPUT); // NC
+  pinMode(OUT5, OUTPUT); // NC
+  pinMode(OUT6, OUTPUT); // NC
+  pinMode(OUT7, OUTPUT); // Negative contactor
   pinMode(OUT8, OUTPUT); // NC SOC gauge
   pinMode(led, OUTPUT);
 
@@ -255,23 +253,21 @@ void loop()
   {
     case (Boot):
       Discharge = 0;
-      digitalWrite(OUT7, LOW);//Current sensor
       RawCur = 0;
-      digitalWrite(OUT4, LOW);//NEG contactor
+      digitalWrite(OUT7, LOW);//NEG contactor
       digitalWrite(OUT3, LOW);//Disable charge
-      digitalWrite(OUT2, LOW);//Precharge AUX relay
-      digitalWrite(OUT1, LOW);//HV AUX relay
+      digitalWrite(OUT2, LOW);//HV AUX precharge relay
+      digitalWrite(OUT1, LOW);//IAA module (HV AUX relay)
       bmsstatus = Ready;
       break;
 
     case (Ready):
       Discharge = 0;
-      digitalWrite(OUT7, LOW);//Current sensor
       RawCur = 0;
-      digitalWrite(OUT4, LOW);//NEG contactor
+      digitalWrite(OUT7, LOW);//NEG contactor
       digitalWrite(OUT3, LOW);//Disable charge
-      digitalWrite(OUT2, LOW);//Precharge AUX relay
-      digitalWrite(OUT1, LOW);//HV AUX relay
+      digitalWrite(OUT2, LOW);//HV AUX precharge relay
+      digitalWrite(OUT1, LOW);//IAA module (HV AUX relay)
       if (bms.getHighCellVolt() > settings.balanceVoltage && bms.getHighCellVolt() > bms.getLowCellVolt() + settings.balanceHyst)
       {
         balancecells = 1;
@@ -292,7 +288,7 @@ void loop()
           Pretimer = millis();
         }
       }
-      if (digitalRead(IN1) == HIGH) //detect Key ON
+      if (digitalRead(IN1) == HIGH) // Key ON
       {
         bmsstatus = Precharge;
         Pretimer = millis();
@@ -307,7 +303,7 @@ void loop()
 
     case (Drive):
       Discharge = 1;
-      if (digitalRead(IN1) == LOW)//Key OFF
+      if (digitalRead(IN1) == LOW)// Key OFF
       {
         bmsstatus = Ready;
       }
@@ -320,7 +316,7 @@ void loop()
 
     case (Charge):
       Discharge = 0;
-      digitalWrite(OUT3, HIGH);//Enable charger
+      digitalWrite(OUT3, HIGH);//Enable charge
       if (bms.getHighCellVolt() > settings.balanceVoltage)
       {
         balancecells = 1;
@@ -350,14 +346,13 @@ void loop()
 
     case (Error):
       Discharge = 0;
-      digitalWrite(OUT7, LOW);//Current sensor
       RawCur = 0;
-      digitalWrite(OUT4, LOW);//NEG contactor
+      digitalWrite(OUT7, LOW);//NEG contactor
       digitalWrite(OUT3, LOW);//Disable charge
-      digitalWrite(OUT2, LOW);//Precharge AUX relay
-      digitalWrite(OUT1, LOW);//HV AUX relay
+      digitalWrite(OUT2, LOW);//HV AUX precharge relay
+      digitalWrite(OUT1, LOW);//IAA module (HV AUX relay)
 
-      if (digitalRead(IN1) == LOW)//Key OFF
+      if (digitalRead(IN1) == LOW)// Key OFF
       {
         if (bms.getLowCellVolt() >= settings.UnderVSetpoint && bms.getHighCellVolt() >= settings.OverVSetpoint)
         {
@@ -397,7 +392,7 @@ void loop()
   }
 
   if (millis() - looptime > 500)
-  {  
+  {
     digitalWrite(led, LOW);
     looptime = millis();
     bms.getAllVoltTemp();
@@ -544,38 +539,43 @@ void printbmsstat()  // List BMS Mode, IO status on console
       SERIALCONSOLE.print(" Bat heat/cool ");
       break;
   }
-
-  SERIALCONSOLE.print("  ");
-  if (digitalRead(IN3) == HIGH)
+  if (digitalRead(IN3) == HIGH) // AC present (charge door open)
   {
-    SERIALCONSOLE.print("| AC Present |");
+    SERIALCONSOLE.print("| AC Present | ");
   }
-  if (digitalRead(IN1) == HIGH)
+  if (digitalRead(IN1) == HIGH) // Key ON
   {
-    SERIALCONSOLE.print("| Key ON |");
+    SERIALCONSOLE.print("| Key ON | ");
   }
   if (balancecells == 1)
   {
-    SERIALCONSOLE.print("|Balancing Active");
+    SERIALCONSOLE.print("| Balancing Active | ");
   }
-  SERIALCONSOLE.print("  ");
   SERIALCONSOLE.print(cellspresent);
   SERIALCONSOLE.println(" cells");
-  SERIALCONSOLE.print("HighSideOut:");
+  SERIALCONSOLE.print("HighSideOut");
+  SERIALCONSOLE.print(" 1:");
   SERIALCONSOLE.print(digitalRead(OUT1));
+  SERIALCONSOLE.print(" 2:");
   SERIALCONSOLE.print(digitalRead(OUT2));
+  SERIALCONSOLE.print(" 3:");
   SERIALCONSOLE.print(digitalRead(OUT3));
-  SERIALCONSOLE.print(digitalRead(OUT4));
-  SERIALCONSOLE.print(" LowSideOut:");
-  SERIALCONSOLE.print(digitalRead(OUT5));
-  SERIALCONSOLE.print(digitalRead(OUT6));
+  //  SERIALCONSOLE.print(digitalRead(OUT4));
+  SERIALCONSOLE.print(" | LowSideOut");
+  //  SERIALCONSOLE.print(digitalRead(OUT5));
+  //  SERIALCONSOLE.print(digitalRead(OUT6));
+  SERIALCONSOLE.print(" 7:");
   SERIALCONSOLE.print(digitalRead(OUT7));
-  SERIALCONSOLE.print(digitalRead(OUT8));
-  SERIALCONSOLE.print(" In:");
-  SERIALCONSOLE.print(digitalRead(IN1));
-  SERIALCONSOLE.print(digitalRead(IN2));
-  SERIALCONSOLE.print(digitalRead(IN3));
-  SERIALCONSOLE.print(digitalRead(IN4));
+  //  SERIALCONSOLE.print(digitalRead(OUT8));
+  SERIALCONSOLE.print(" | In");
+  SERIALCONSOLE.print(" 1:");
+  SERIALCONSOLE.print(digitalRead(IN1)); // Key ON
+  SERIALCONSOLE.print(" 2:");
+  SERIALCONSOLE.print(digitalRead(IN2)); // Key in
+  SERIALCONSOLE.print(" 3:");
+  SERIALCONSOLE.print(digitalRead(IN3)); // AC present charge door open (change to IN4!)
+  SERIALCONSOLE.print(" 4:");
+  SERIALCONSOLE.print(digitalRead(IN4)); // Change hardware, next
 }
 
 void getcurrent()
@@ -640,7 +640,7 @@ void updateSOC()
   {
     SERIALCONSOLE.print("CANbus ");
     SERIALCONSOLE.print("  ");
-    if (digitalRead(OUT4) == HIGH) // NEG contactor close
+    if (digitalRead(OUT7) == HIGH) // NEG contactor close
     {
       SERIALCONSOLE.print(currentact);
       SERIALCONSOLE.print("mA");
@@ -675,34 +675,34 @@ void SOCcharged(int y)
 
 void Prechargecon()
 {
-  if (digitalRead(IN1) == HIGH || digitalRead(IN3) == HIGH) //detect Key ON or AC present
+  if (digitalRead(IN1) == HIGH || digitalRead(IN3) == HIGH) // Key ON or AC present (charge door open)
   {
-    digitalWrite(OUT4, HIGH);//NEG contactor close
-    digitalWrite(OUT7, HIGH);//Power to CAB current sensor
+    digitalWrite(OUT7, HIGH);//NEG contactor close
     if (Pretimer +  settings.Pretime > millis() || currentact > settings.Precurrent)
     {
-      digitalWrite(OUT2, HIGH);//precharge
+      digitalWrite(OUT2, HIGH);//HV AUX precharge relay
     }
     else //close AUX relay
     {
-      digitalWrite(OUT1, HIGH);//HV AUX relay
-      if (digitalRead(IN3) == HIGH)
+      digitalWrite(OUT1, HIGH);//IAA module (HV AUX relay)
+      if (digitalRead(IN3) == HIGH && digitalRead(OUT2) == LOW) // AC present (charge door open) and precharge finished
       {
         bmsstatus = Charge;
       }
-      if (digitalRead(IN1) == HIGH)
+      if (digitalRead(IN1) == HIGH && digitalRead(OUT2) == LOW) // Key ON and precharge finished
       {
         bmsstatus = Drive;
       }
-      digitalWrite(OUT2, LOW);
+      // Avoid open precharge before IAA has closed HV AUX relay
     }
+    if (Pretimer +  settings.Pretime + 8000 < millis() )        // 8000mS delay before precharge relay open
+      digitalWrite(OUT2, LOW);                                  //HV AUX precharge relay
   }
   else
   {
-    digitalWrite(OUT1, LOW);//HV AUX relay
-    digitalWrite(OUT2, LOW);//Precharge AUX relay
-    digitalWrite(OUT4, LOW);//NEG contactor
-    digitalWrite(OUT7, LOW);//Current sensor
+    digitalWrite(OUT1, LOW);//IAA module (HV AUX relay)
+    digitalWrite(OUT2, LOW);//HV AUX precharge relay
+    digitalWrite(OUT7, LOW);//NEG contactor
     RawCur = 0;
     bmsstatus = Ready;
   }
@@ -714,8 +714,6 @@ void can_display() //communication Teensy 4.0 breakout over CAN
   msg.len = 8;
   msg.buf[0] = lowByte(SOC);
   msg.buf[1] = highByte(SOC);
-  //  msg.buf[2] = lowByte(SOH);
-  //  msg.buf[3] = highByte(SOH);
   msg.buf[2] = (bmsstatus);
   msg.buf[3] = 0;
   msg.buf[4] = 0;
@@ -1262,13 +1260,13 @@ void menu()
         switch (settings.chargertype)
         {
           case 0:
-            SERIALCONSOLE.print("Relay Control");
+            SERIALCONSOLE.println("Relay Control");
             break;
           case 1:
-            SERIALCONSOLE.print("Tesla CAN control");
+            SERIALCONSOLE.println("Tesla CAN control");
             break;
         }
-        SERIALCONSOLE.println("9 - Charge Current derate Low: ");
+        SERIALCONSOLE.print("9 - Charge Current derate Low: ");
         SERIALCONSOLE.print(settings.ChargeTSetpoint);
         SERIALCONSOLE.println(" C");
         SERIALCONSOLE.println("q - Go back to menu");
